@@ -22,51 +22,103 @@
  */
 define(['core/ajax', 'core/str', 'core/notification', 'core/templates'], function(Ajax, Str, Notification, Templates) {
 
+    var STRINGS = [
+        'explain_error', 'explain_warnings', 'explain_no_warnings', 'explain_node',
+        'explain_relation', 'explain_index', 'explain_rows', 'explain_cost',
+        'explain_filter', 'explain_running', 'enter_sql', 'query_required'
+    ];
+    var NOINDEX = ['sort', 'hash', 'nested loop', 'merge join', 'hash join', 'aggregate'];
+
     /**
-     * Render loading state into the table container.
+     * Render a template into a container.
      *
-     * @param {HTMLElement} tablebox The container element for the table.
-     * @returns {Promise} Resolved when rendering is complete.
+     * @param {String} template Template name.
+     * @param {HTMLElement} container Target element.
+     * @param {Object} context Template context.
+     * @returns {Promise}
      */
-    function showLoading(tablebox) {
-        return Templates.render('report_querybuilder/explain_loading', {
-            message: 'Running EXPLAIN, please wait...'
-        }).then(function(html) {
-            tablebox.innerHTML = html;
-            return;
-        }).catch(Notification.exception);
+    function render(template, container, context) {
+        return Templates.render(template, context)
+            .then(function(html, js) {
+                Templates.replaceNodeContents(container, html, js);
+                return;
+            })
+            .catch(Notification.exception);
     }
 
     /**
-     * Render warnings into the warnings container.
+     * Build the context for the warnings template.
      *
-     * @param {HTMLElement} warnbox The container element for warnings.
-     * @param {Object} warningsdata The warnings data object to render.
-     * @returns {Promise} Resolved when rendering is complete.
+     * @param {Object} data Response from the external function.
+     * @param {Object} str Loaded language strings.
+     * @returns {Object}
      */
-    function renderWarnings(warnbox, warningsdata) {
-        return Templates.render('report_querybuilder/explain_warnings', warningsdata)
-            .then(function(html) {
-                warnbox.innerHTML = html;
-                return;
-            }).catch(Notification.exception);
+    function buildWarnings(data, str) {
+        var warnings = data.warnings || [];
+        return {
+            'has_warnings': warnings.length > 0,
+            'warnings_heading': str.explain_warnings,
+            'no_warnings_message': str.explain_no_warnings,
+            warnings: warnings.map(function(w) {
+                return {message: w.message, 'is_danger': w.level === 'danger'};
+            })
+        };
     }
 
     /**
-     * Render the explain plan table.
+     * Build the context for the plan table template.
      *
-     * @param {HTMLElement} tablebox The container element for the table.
-     * @param {HTMLElement} panel The explain panel element to scroll into view.
-     * @param {Object} tabledata The table data object to render.
-     * @returns {Promise} Resolved when rendering is complete.
+     * @param {Object} data Response from the external function.
+     * @param {Object} str Loaded language strings.
+     * @returns {Object}
      */
-    function renderTable(tablebox, panel, tabledata) {
-        return Templates.render('report_querybuilder/explain_table', tabledata)
-            .then(function(html) {
-                tablebox.innerHTML = html;
-                panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
-                return;
-            }).catch(Notification.exception);
+    function buildTable(data, str) {
+        var steps = (data.steps || []).map(function(step) {
+            var lnode = (step.node_type || '').toLowerCase();
+            var rowclass = '';
+            if (step.warnings && step.warnings.length > 0) {
+                rowclass = step.warnings.some(function(w) {
+                    return w.level === 'danger';
+                }) ? 'table-danger' : 'table-warning';
+            }
+            var indent = [];
+            for (var i = 0; i < step.depth; i++) {
+                indent.push({});
+            }
+            var isseq = lnode.indexOf('seq scan') !== -1;
+            var isindex = !isseq && lnode.indexOf('index') !== -1;
+            var label = step.node_type || '';
+            if (isseq) {
+                label = '';
+            } else if (isindex) {
+                label = label.replace(/index scan|index only scan|bitmap index scan/i, 'Scan').trim();
+            }
+            return {
+                'row_class': rowclass,
+                indent: indent,
+                'is_seqscan': isseq,
+                'is_indexscan': isindex,
+                'node_label': label,
+                relation: step.relation || '',
+                'has_index': !!step.index,
+                'index_name': step.index || '',
+                'no_index_needed': NOINDEX.some(function(t) {
+                    return lnode.indexOf(t) !== -1;
+                }),
+                'rows_formatted': step.rows_est !== null ? Number(step.rows_est).toLocaleString() : '',
+                'cost_total': step.cost_total !== null ? step.cost_total : '',
+                filter: step.filter || ''
+            };
+        });
+        return {
+            'col_node': str.explain_node,
+            'col_relation': str.explain_relation,
+            'col_index': str.explain_index,
+            'col_rows': str.explain_rows,
+            'col_cost': str.explain_cost,
+            'col_filter': str.explain_filter,
+            steps: steps
+        };
     }
 
     return {
@@ -74,180 +126,68 @@ define(['core/ajax', 'core/str', 'core/notification', 'core/templates'], functio
          * Initialise the analyze module.
          */
         init: function() {
-
             var btn = document.getElementById('analyzebtn');
             var closebtn = document.getElementById('explainclosebtn');
             var panel = document.getElementById('explainpanel');
             var warnbox = document.getElementById('explainwarnings');
             var tablebox = document.getElementById('explaintable');
             var spinner = document.getElementById('analyzespinner');
+            var textarea = document.getElementById('advsql');
 
-            if (!btn) {
+            if (!btn || !textarea) {
                 return;
             }
 
             if (closebtn) {
                 closebtn.addEventListener('click', function() {
-                    panel.style.display = 'none';
+                    panel.classList.add('d-none');
                 });
             }
 
-            btn.addEventListener('click', function() {
-                var sql = document.getElementById('advsql').value.trim();
+            Str.get_strings(STRINGS.map(function(key) {
+                return {key: key, component: 'report_querybuilder'};
+            })).then(function(strings) {
+                var str = {};
+                STRINGS.forEach(function(key, i) {
+                    str[key] = strings[i];
+                });
 
-                if (!sql) {
-                    Notification.alert('Query required', 'Please enter a SQL query to analyze.');
-                    return;
-                }
+                btn.addEventListener('click', function() {
+                    var sql = textarea.value.trim();
+                    if (!sql) {
+                        Notification.alert(str.query_required, str.enter_sql);
+                        return;
+                    }
 
-                btn.disabled = true;
-                spinner.style.display = 'inline-block';
-                panel.style.display = 'block';
-                warnbox.innerHTML = '';
+                    btn.disabled = true;
+                    spinner.classList.remove('d-none');
+                    panel.classList.remove('d-none');
+                    warnbox.textContent = '';
+                    render('report_querybuilder/explain_loading', tablebox, {message: str.explain_running});
 
-                showLoading(tablebox);
-
-                Str.get_strings([
-                    {key: 'explain_error', component: 'report_querybuilder'},
-                    {key: 'explain_warnings', component: 'report_querybuilder'},
-                    {key: 'explain_no_warnings', component: 'report_querybuilder'},
-                    {key: 'explain_node', component: 'report_querybuilder'},
-                    {key: 'explain_relation', component: 'report_querybuilder'},
-                    {key: 'explain_index', component: 'report_querybuilder'},
-                    {key: 'explain_rows', component: 'report_querybuilder'},
-                    {key: 'explain_cost', component: 'report_querybuilder'},
-                    {key: 'explain_filter', component: 'report_querybuilder'},
-                    {key: 'analyze_query', component: 'report_querybuilder'}
-                ])
-                    .then(function(strings) {
-                        return {
-                            strError: strings[0],
-                            strWarnings: strings[1],
-                            strNowarn: strings[2],
-                            strNode: strings[3],
-                            strRelation: strings[4],
-                            strIndex: strings[5],
-                            strRows: strings[6],
-                            strCost: strings[7],
-                            strFilter: strings[8],
-                            strAnalyze: strings[9]
-                        };
-                    })
-                    .then(function(str) {
-            // eslint-disable-next-line promise/no-nesting
-                        return Ajax.call([{
-                            methodname: 'report_querybuilder_analyze_query',
-                            args: {sql: sql}
-                        }])[0].then(function(data) {
-                            return {str: str, data: data};
-                        });
-                    })
-                    .then(function(payload) {
-                        var str = payload.str;
-                        var data = payload.data;
-
+                    Ajax.call([{
+                        methodname: 'report_querybuilder_analyze_query',
+                        args: {sql: sql}
+                    }])[0].then(function(data) {
                         btn.disabled = false;
-                        spinner.style.display = 'none';
-                        btn.textContent = str.strAnalyze;
-
-                        var warningsdata = {
-                            'has_warnings': data.warnings && data.warnings.length > 0,
-                            'warnings_heading': str.strWarnings,
-                            'no_warnings_message': str.strNowarn,
-                            warnings: (data.warnings || []).map(function(w) {
-                                return {
-                                    message: w.message,
-                                    isDanger: w.level === 'danger'
-                                };
-                            })
-                        };
-            // eslint-disable-next-line promise/no-nesting
-                        return renderWarnings(warnbox, warningsdata)
-                            .then(function() {
-                                return {str: str, data: data};
-                            });
-                    })
-                    .then(function(payload) {
-                        var str = payload.str;
-                        var data = payload.data;
-
-                        var steps = (data.steps || []).map(function(step) {
-                            var lnode = step.node_type ? step.node_type.toLowerCase() : '';
-                            var rowclass = '';
-
-                            if (step.warnings && step.warnings.length > 0) {
-                                var hasDanger = step.warnings.some(function(w) {
-                                    return w.level === 'danger';
-                                });
-                                rowclass = hasDanger ? 'table-danger' : 'table-warning';
-                            }
-
-                            var indent = '';
-                            for (var i = 0; i < step.depth; i++) {
-                                indent += '<span style="display:inline-block;width:18px;">&#8627;</span>';
-                            }
-
-                            var nodecell = indent + step.node_type;
-                            if (lnode.indexOf('seq scan') !== -1) {
-                                nodecell = indent + '<span class="badge bg-danger me-1">SEQ SCAN</span>';
-                            } else if (lnode.indexOf('index') !== -1) {
-                                nodecell = indent + '<span class="badge bg-success me-1">INDEX</span> ' +
-                                    step.node_type.replace(/index scan|index only scan|bitmap index scan/i, 'Scan').trim();
-                            }
-
-                            var noindex = ['sort', 'hash', 'nested loop', 'merge join', 'hash join', 'aggregate'];
-                            var isNoIndexNode = noindex.some(function(t) {
-                                return lnode.indexOf(t) !== -1;
-                            });
-
-                            var indexcell = '';
-                            if (step.index) {
-                                indexcell = '<span class="badge bg-success">' + step.index + '</span>';
-                            } else if (isNoIndexNode) {
-                                indexcell = '<span class="text-muted">&#8212;</span>';
-                            } else {
-                                indexcell = '<span class="badge bg-danger">(none)</span>';
-                            }
-
-                            return {
-                                'row_class': rowclass,
-                                'node_cell': nodecell,
-                                'relation': step.relation || '',
-                                'index_cell': indexcell,
-                                'rows_formatted': step.rows_est !== null
-                                    ? Number(step.rows_est).toLocaleString()
-                                    : '',
-                                'cost_total': step.cost_total !== null ? step.cost_total : '',
-                                'filter': step.filter || ''
-                            };
-                        });
-
-                        var tabledata = {
-                            'col_node': str.strNode,
-                            'col_relation': str.strRelation,
-                            'col_index': str.strIndex,
-                            'col_rows': str.strRows,
-                            'col_cost': str.strCost,
-                            'col_filter': str.strFilter,
-                            'steps': steps
-                        };
-
-                        return renderTable(tablebox, panel, tabledata);
-                    })
-                    .catch(function(err) {
+                        spinner.classList.add('d-none');
+                        return Promise.all([
+                            render('report_querybuilder/explain_warnings', warnbox, buildWarnings(data, str)),
+                            render('report_querybuilder/explain_table', tablebox, buildTable(data, str))
+                        ]);
+                    }).then(function() {
+                        panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                        return;
+                    }).catch(function(err) {
                         btn.disabled = false;
-                        spinner.style.display = 'none';
-
-                        var errmsg = err.message || err.error || JSON.stringify(err);
-            // eslint-disable-next-line promise/no-nesting
-                        Templates.render('report_querybuilder/explain_loading', {
-                            message: 'Error: ' + errmsg
-                        }).then(function(html) {
-                            tablebox.innerHTML = html;
-                            return;
-                        }).catch(Notification.exception);
+                        spinner.classList.add('d-none');
+                        render('report_querybuilder/explain_loading', tablebox, {
+                            message: str.explain_error + ' ' + (err.message || err.error || '')
+                        });
                     });
-            });
+                });
+                return;
+            }).catch(Notification.exception);
         }
     };
 });

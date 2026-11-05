@@ -72,9 +72,20 @@
     <tbody>
         {{#steps}}
         <tr class="{{row_class}}">
-            <td>{{{node_cell}}}</td>
+            <td>
+                {{#indent}}<span class="qb-indent">&#8627;</span>{{/indent}}
+                {{#is_seqscan}}<span class="badge bg-danger me-1">{{#str}}explain_seqscan, report_querybuilder{{/str}}</span>{{/is_seqscan}}
+                {{#is_indexscan}}<span class="badge bg-success me-1">{{#str}}explain_indexscan, report_querybuilder{{/str}}</span>{{/is_indexscan}}
+                {{node_label}}
+            </td>
             <td>{{relation}}</td>
-            <td>{{{index_cell}}}</td>
+            <td>
+                {{#has_index}}<span class="badge bg-success">{{index_name}}</span>{{/has_index}}
+                {{^has_index}}
+                    {{#no_index_needed}}<span class="text-muted">&#8212;</span>{{/no_index_needed}}
+                    {{^no_index_needed}}<span class="badge bg-danger">{{#str}}explain_none, report_querybuilder{{/str}}</span>{{/no_index_needed}}
+                {{/has_index}}
+            </td>
             <td>{{rows_formatted}}</td>
             <td>{{cost_total}}</td>
             <td>{{filter}}</td>

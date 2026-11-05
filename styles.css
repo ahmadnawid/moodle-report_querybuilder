@@ -29,3 +29,8 @@
 .qb-explain-panel {
     display: none;
 }
+
+.qb-indent {
+    display: inline-block;
+    width: 18px;
+}

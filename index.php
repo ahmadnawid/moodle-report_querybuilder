@@ -178,7 +178,7 @@ if ($advanced) {
         $savedqueryid = optional_param('savedqueryid', 0, PARAM_INT);
         $category = optional_param('category', '', PARAM_TEXT);
 
-            $error = sql_validator::validate($query);
+        $error = sql_validator::validate($query);
         if ($error) {
             redirect(
                 new moodle_url('/report/querybuilder/index.php', ['advanced' => 1]),
@@ -352,7 +352,6 @@ if ($advanced) {
         'class'    => 'btn btn-outline-danger',
         'id'       => 'deletequerybtn',
         'disabled' => $loadid ? null : 'disabled',
-        'onclick'  => "return confirm('" . get_string('confirm_delete', 'report_querybuilder') . "');",
     ]);
     echo html_writer::end_tag('form');
 
@@ -488,7 +487,7 @@ if ($advanced) {
         'id'           => 'advsql',
         'name'         => 'advsql',
         'class'        => 'form-control font-monospace',
-        'style'        => 'height:320px; resize:vertical;',
+        'rows'         => 14,
         'autocomplete' => 'off',
         'spellcheck'   => 'false',
     ]);
@@ -501,11 +500,6 @@ if ($advanced) {
         [
             'type'    => 'submit',
             'class'   => 'btn btn-primary',
-            'onclick' => "var sql = document.getElementById('advsql').value.trim();
-                          if (!sql) {
-                              alert('" . get_string('enter_sql', 'report_querybuilder') . "');
-                              return false;
-                          }",
         ]
     );
     echo html_writer::tag(
@@ -515,7 +509,7 @@ if ($advanced) {
     );
     echo html_writer::tag('span', '', [
         'id'    => 'analyzespinner',
-        'class' => 'spinner-border spinner-border-sm ms-1',
+        'class' => 'spinner-border spinner-border-sm ms-1 d-none',
         'style' => 'display:none;',
     ]);
     echo html_writer::end_div();
@@ -528,13 +522,13 @@ if ($advanced) {
     echo html_writer::end_tag('form');
 
     // Explain plan panel (shown below editor after analyze).
-    echo html_writer::start_div('mt-3', ['id' => 'explainpanel', 'style' => 'display:none;']);
+    echo html_writer::start_div('mt-3 d-none', ['id' => 'explainpanel', 'style' => 'display:none;']);
     echo html_writer::start_div('card');
 
     // Card header.
     echo html_writer::start_div('card-header d-flex justify-content-between align-items-center');
     echo html_writer::tag('strong', get_string('explain_plan', 'report_querybuilder'));
-    echo html_writer::tag('button', 'Close', [
+    echo html_writer::tag('button', get_string('btn_close', 'report_querybuilder'), [
         'type'    => 'button',
         'class'   => 'btn btn-sm btn-outline-secondary',
         'id'      => 'explainclosebtn',
@@ -555,7 +549,13 @@ if ($advanced) {
 
     $PAGE->requires->js_call_amd('report_querybuilder/analyze', 'init');
 
-    $PAGE->requires->js_call_amd('report_querybuilder/editor', 'init');
+    $PAGE->requires->js_call_amd('report_querybuilder/editor', 'init', [[
+        'strings' => [
+            'entersql'      => get_string('enter_sql', 'report_querybuilder'),
+            'queryrequired' => get_string('query_required', 'report_querybuilder'),
+            'confirmdelete' => get_string('confirm_delete', 'report_querybuilder'),
+        ],
+    ]]);
 
     echo $OUTPUT->footer();
     exit;

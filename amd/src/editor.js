@@ -20,14 +20,23 @@
  * @copyright  2026 Ahmad Nawid Mustafazada <ahmadnawid.mz@gmail.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-define([], function() {
+define(['core/notification'], function(Notification) {
     return {
-        init: function() {
+        /**
+         * Initialise the editor module.
+         *
+         * @param {Object} params Contains a strings object with entersql, queryrequired and confirmdelete.
+         */
+        init: function(params) {
+            var strings = (params && params.strings) || {};
             var toggle = document.getElementById('modeswitchbtn');
             var textarea = document.getElementById('advsql');
             var hiddenquery = document.getElementById('hiddenquery');
             var saveform = document.getElementById('savequeryform');
+            var editorform = document.getElementById('sqleditorform');
+            var deleteform = document.getElementById('deletequeryform');
 
+            // Carry the current SQL into builder mode.
             if (toggle && textarea) {
                 toggle.addEventListener('click', function(e) {
                     e.preventDefault();
@@ -40,9 +49,30 @@ define([], function() {
                 });
             }
 
+            // Copy the live SQL into the hidden field before saving.
             if (saveform && textarea && hiddenquery) {
                 saveform.addEventListener('submit', function() {
                     hiddenquery.value = textarea.value;
+                });
+            }
+
+            // Block running an empty query.
+            if (editorform && textarea) {
+                editorform.addEventListener('submit', function(e) {
+                    if (!textarea.value.trim()) {
+                        e.preventDefault();
+                        Notification.alert(strings.queryrequired, strings.entersql);
+                    }
+                });
+            }
+
+            // Ask for confirmation before deleting.
+            if (deleteform) {
+                deleteform.addEventListener('submit', function(e) {
+                    // eslint-disable-next-line no-alert
+                    if (!window.confirm(strings.confirmdelete)) {
+                        e.preventDefault();
+                    }
                 });
             }
         }
